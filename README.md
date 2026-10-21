@@ -10,7 +10,7 @@ It seeks to enable:
 
 * Instrumentation of inbound and outbound HTTP transactions, following [OTel Semconv](https://opentelemetry.io/docs/specs/semconv/general/trace/).
 * Tracing data egress via OTLP/JSON. (JSON-only to avoid bringing in a gRPC dependency.)
-* Distributed tracing via W3C Traceparent.
+* Distributed tracing via W3C Traceparent, including forwarding baggage (but not modifying it).
 
 Anything else, including the following, should be considered initally out of scope:
 
