@@ -18,6 +18,10 @@
     "tracing",
     "diagnostics_channel"
   ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
   "engines": {
     "node": ">=24.6.0"
   },

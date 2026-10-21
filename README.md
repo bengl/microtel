@@ -20,6 +20,142 @@ Anything else, including the following, should be considered initally out of sco
 * Logs via OTLP
 * Publishing to npm (it's only intended as a dependency of Node.js for now, but this could change in the future, maybe)
 
+## Usage
+
+Everything is controlled through a single exported function, `init()`. There
+are no environment variables and no command-line flags. The other two exports,
+`isActive()` and `flush()`, report state and force an export.
+
+```js
+const otel = require('@nodejs/microtel');
+
+otel.init({
+  endpoint: 'http://collector.example.com:4318',
+  serviceName: 'my-service',
+});
+```
+
+Tracing is activated at most once per process. Calling `init()` a second time
+is a no-op, even with different options. There is no way to stop tracing once
+started. Invalid options throw.
+
+### Options
+
+| Option           | Type   | Default                      | Description |
+| ---------------- | ------ | ---------------------------- | ----------- |
+| `endpoint`       | string | `http://localhost:4318`      | Base URL of an OTLP/HTTP collector. Only `http:` and `https:` URLs are accepted. Any path is replaced with `/v1/traces`. An endpoint already ending with `/v1/traces` is used as is. |
+| `serviceName`    | string | `unknown_service:node`      | Service name in exported resource attributes. The default follows the OpenTelemetry [semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/trace/) for low-cardinality service names. |
+| `filter`         | string | all modules                  | Comma-separated list of modules to instrument. Supported values: `node:http`, `node:undici`, `node:fetch`. |
+| `maxBufferSize`  | number | `100`                        | Number of spans buffered before an immediate flush is triggered. Must be a positive integer. |
+| `flushInterval`  | number | `10000`                      | Milliseconds between periodic flushes. Must be a positive integer. |
+
+### Exported functions
+
+* `init(options)` activates tracing. Returns nothing. Throws on invalid options.
+* `isActive()` returns whether tracing was activated.
+* `flush()` exports any buffered spans immediately. Also runs on `beforeExit`.
+
+## Instrumented operations
+
+When tracing is active, spans are created automatically for the following
+operations. Per the OpenTelemetry [semantic conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/), span
+names must be low cardinality. Node.js core has no route concept, so spans are
+named `{method}` and the request details live in the attributes.
+
+### HTTP server
+
+A span with kind `SERVER` is created for each incoming HTTP request. The span
+starts when the request is received and ends when the response finishes. If the
+client disconnects before the response completes, the span ends with an error
+status.
+
+Server spans receive error status (`STATUS_ERROR`) for 5xx response codes. 4xx
+responses are not treated as server errors per OpenTelemetry semantic
+conventions.
+
+Attributes set on server spans:
+
+| Attribute                   | Description                      | Condition                     |
+| --------------------------- | -------------------------------- | ----------------------------- |
+| `http.request.method`       | HTTP method (e.g. `GET`, `POST`) | Always                        |
+| `url.path`                  | Request URL path (without query) | Always                        |
+| `url.query`                 | Query string (without `?`)       | When query string is present  |
+| `url.scheme`                | `http` or `https`                | Always                        |
+| `server.address`            | Host header value                | When `Host` header is present |
+| `network.protocol.version`  | HTTP version (e.g. `1.1`)        | Always                        |
+| `http.response.status_code` | Response status code             | When response finishes        |
+| `error.type`                | HTTP status code as string       | On 5xx responses              |
+
+### HTTP client
+
+A span with kind `CLIENT` is created for each outgoing HTTP request made via
+`node:http`. The span starts when the request is created and ends when the
+response body completes or an error occurs.
+
+Client spans receive error status (`STATUS_ERROR`) for 4xx and 5xx response
+codes. On connection errors, an `exception` event is added to the span with
+`exception.type`, `exception.message`, and `exception.stacktrace` attributes.
+
+Attributes set on client spans:
+
+| Attribute                   | Description               | Condition                 |
+| --------------------------- | ------------------------- | ------------------------- |
+| `http.request.method`       | HTTP method               | Always                    |
+| `url.full`                  | Full request URL          | Always                    |
+| `server.address`            | Target host               | Always                    |
+| `server.port`               | Target port               | When available            |
+| `http.response.status_code` | Response status code      | When response is received |
+| `network.protocol.version`  | HTTP version              | When response is received |
+| `error.type`                | Status code or error name | On 4xx/5xx or errors      |
+
+### Undici/Fetch client
+
+A span with kind `CLIENT` is created for each outgoing request made via
+`fetch()` or undici's `request()`. Error status, `exception` event behavior,
+and span end timing are the same as for HTTP client spans above.
+
+Attributes set on undici/fetch client spans:
+
+| Attribute                   | Description               | Condition                 |
+| --------------------------- | ------------------------- | ------------------------- |
+| `http.request.method`       | HTTP method               | Always                    |
+| `url.full`                  | Full request URL          | Always                    |
+| `server.address`            | Target origin             | Always                    |
+| `http.response.status_code` | Response status code      | When response is received |
+| `error.type`                | Status code or error name | On 4xx/5xx or errors      |
+
+## W3C Trace Context propagation
+
+Tracing automatically propagates [W3C Trace Context](https://www.w3.org/TR/trace-context/) across HTTP boundaries:
+
+* **Incoming requests**: The `traceparent` header is read from incoming HTTP
+requests, and child spans created during request processing inherit the trace
+ID. `traceparent` values using a version other than `00` are rejected, and a
+fresh trace is started instead. The `tracestate` header, when present, is
+attached to the span and forwarded verbatim to outgoing requests. It is never
+parsed or modified.
+* **Outgoing requests**: The `traceparent` header is injected into outgoing
+HTTP and undici/fetch requests, together with the stored `tracestate` when one
+is present, enabling distributed tracing across services.
+
+## Limitations
+
+The tracing subsystem is independent of the OpenTelemetry JavaScript packages. It
+is not interoperable with `@opentelemetry/api`, and spans created by one are not
+visible to the other. Running both in the same process produces duplicate trace
+and span IDs. The built-in instrumentation also overwrites the `traceparent`
+(and, when present, `tracestate`) header on outgoing HTTP requests, discarding
+whatever a userland propagator may have set. Users should run either this
+package or a userland OpenTelemetry SDK, not both.
+
+`init()` activates tracing in the thread that calls it. Worker threads
+(`node:worker_threads`) are not traced unless they call `init()` themselves.
+
+Buffered spans are exported periodically, when the buffer fills, and when the
+event loop is about to drain. Spans that are still buffered when `process.exit()`
+is called explicitly are lost, because explicit exits do not run the exit-time
+flush.
+
 ## License
 
 [MIT](./LICENSE)
