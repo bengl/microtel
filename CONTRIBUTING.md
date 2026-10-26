@@ -2,6 +2,7 @@
 
 * [Code of Conduct](#code-of-conduct)
 * [Developer's Certificate of Origin 1.1](#developers-certificate-of-origin)
+* [Pull requests](#pull-requests)
 
 ## Code of Conduct
 
@@ -38,3 +39,9 @@ By making a contribution to this project, I certify that:
      maintained indefinitely and may be redistributed consistent with
      this project or the open source license(s) involved.
 </pre>
+
+## Pull requests
+
+A pull request should be open for at least 24 hours before it is merged,
+so that reviewers across time zones have a chance to see it. Trivial
+changes, as determined by the maintainers, may be merged sooner.
