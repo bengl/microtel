@@ -47,7 +47,7 @@ started. Invalid options throw.
 | `serviceName`    | string | `unknown_service:node`      | Service name in exported resource attributes. The default follows the OpenTelemetry [semantic conventions](https://opentelemetry.io/docs/specs/semconv/general/trace/) for low-cardinality service names. |
 | `sdkName`        | string | `microtel`                   | `telemetry.sdk.name` resource attribute, and the name of the instrumentation scope on exported spans. |
 | `sdkVersion`    | string | this package's version      | `telemetry.sdk.version` resource attribute, and the scope version. |
-| `filter`         | string | all modules                  | Comma-separated list of modules to instrument. Supported values: `node:http`, `node:http/client`, `node:http/server`, and `node:undici`. `node:fetch` is an alias for `node:undici`: both cover all undici requests, including `fetch()`, and either one enables them. |
+| `filter`         | string | all modules                  | Comma-separated list of modules to instrument. Supported values: `node:http`, `node:http/client`, `node:http/server`, `node:http2`, `node:http2/server`, and `node:undici`. `node:http` covers `node:http/client` and `node:http/server`; `node:http2` covers `node:http2/server`. `node:fetch` is an alias for `node:undici`: both cover all undici requests, including `fetch()`, and either one enables them. |
 | `exclude`        | string | none                         | Comma-separated list of modules to exclude from instrumentation. Same values as `filter`; takes precedence over it. |
 | `maxBufferSize`  | number | `100`                        | Number of spans buffered before an immediate flush is triggered. Must be a positive integer. |
 | `flushInterval`  | number | `10000`                      | Milliseconds between periodic flushes. Must be a positive integer. |
@@ -91,6 +91,32 @@ Attributes set on server spans:
 | `server.address`            | Host header value                | When `Host` header is present |
 | `network.protocol.version`  | HTTP version (e.g. `1.1`)        | Always                        |
 | `http.response.status_code` | Response status code             | When response finishes        |
+| `error.type`                | HTTP status code as string       | On 5xx responses              |
+
+### HTTP/2 server
+
+A span with kind `SERVER` is created for each incoming HTTP/2 request
+stream, whether over cleartext (`http2.createServer`) or TLS
+(`http2.createSecureServer`). The span starts when the request headers are
+received and ends when the stream closes, so its duration covers the full
+response transfer. Incoming `traceparent`/`tracestate` headers are parsed
+with the same semantics as for HTTP/1.1 servers.
+
+If a stream is aborted before the response completes, the span ends with an
+error status. Server spans receive error status (`STATUS_ERROR`) for 5xx
+response codes; 4xx responses are not server errors.
+
+Attributes set on HTTP/2 server spans:
+
+| Attribute                   | Description                      | Condition                     |
+| --------------------------- | -------------------------------- | ----------------------------- |
+| `http.request.method`       | HTTP method (e.g. `GET`, `POST`) | Always                        |
+| `url.path`                  | Request URL path (without query) | Always                        |
+| `url.query`                 | Query string (without `?`)       | When query string is present  |
+| `url.scheme`                | `http` or `https`                | Always                        |
+| `server.address`            | `:authority` pseudo-header value | When present                  |
+| `network.protocol.version`  | `2.0`                            | Always                        |
+| `http.response.status_code` | Response status code             | When the response is sent     |
 | `error.type`                | HTTP status code as string       | On 5xx responses              |
 
 ### HTTP client
@@ -149,14 +175,15 @@ scheme default (`80` for `http:`, `443` for `https:`) when the origin omits it.
 Tracing automatically propagates [W3C Trace Context](https://www.w3.org/TR/trace-context/) across HTTP boundaries:
 
 * **Incoming requests**: The `traceparent` header is read from incoming HTTP
-requests, and child spans created during request processing inherit the trace
-ID. `traceparent` values using a version other than `00` are rejected, and a
-fresh trace is started instead. The `tracestate` header, when present, is
-attached to the span and forwarded verbatim to outgoing requests. It is never
-parsed or modified.
+and HTTP/2 requests, and child spans created during request processing
+inherit the trace ID. `traceparent` values using a version other than `00` are
+rejected, and a fresh trace is started instead. The `tracestate` header, when
+present, is attached to the span and forwarded verbatim to outgoing requests.
+It is never parsed or modified.
 * **Outgoing requests**: The `traceparent` header is injected into outgoing
 HTTP and undici/fetch requests, together with the stored `tracestate` when
-one is present, enabling distributed tracing across services.
+one is present, enabling distributed tracing across services. Outgoing
+`node:http2` requests receive no injection; see the limitations below.
 
 ## Benchmarks
 
@@ -184,6 +211,13 @@ package or a userland OpenTelemetry SDK, not both.
 
 `init()` activates tracing in the thread that calls it. Worker threads
 (`node:worker_threads`) are not traced unless they call `init()` themselves.
+
+Outgoing requests made through `node:http2` are not traced, on either the
+span or the propagation side. Node's HTTP/2 client diagnostics channels
+publish a detached snapshot of the request headers after they have already
+been serialized for the wire, so there is no seam at which the
+instrumentation could inject a `traceparent` or remove a stale `tracestate`.
+Inbound HTTP/2 context is fully parsed; only the client side is affected.
 
 Buffered spans are exported periodically, when the buffer fills, and when the
 event loop is about to drain. Spans that are still buffered when `process.exit()`
