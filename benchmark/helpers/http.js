@@ -1,8 +1,8 @@
 'use strict';
 
-// Shared machinery for the HTTP benchmarks. Each .bench.js file runs in
-// its own child process and tracing activates once per process, so the
-// traced and untraced benchmarks live in separate files that each
+// Shared machinery for the HTTP and fetch benchmarks. Each .bench.js file
+// runs in its own child process and tracing activates once per process,
+// so the traced and untraced benchmarks live in separate files that each
 // register one benchmark through this helper.
 
 const { after, before, bench } = require('node:bench');
@@ -13,24 +13,34 @@ const listen = (server) =>
   new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const close = (server) => new Promise((resolve) => server.close(resolve));
 
-// Sets up a local target server, a keep-alive agent for the load, and,
-// when tracing, a dummy collector: the measurement then covers span
-// creation, serialization, and the export round trip.
-async function setup({ tracing = false } = {}) {
-  let collector = null;
-  if (tracing) {
-    collector = http.createServer((req, res) => {
-      req.resume();
-      res.end();
-    });
-    await listen(collector);
-    microtel.init({ endpoint: `http://127.0.0.1:${collector.address().port}` });
-  }
+// Starts, when tracing, a dummy collector: the measurement then covers
+// span creation, serialization, and the export round trip.
+async function startCollector({ tracing }) {
+  if (!tracing) return null;
 
+  const collector = http.createServer((req, res) => {
+    req.resume();
+    res.end();
+  });
+  await listen(collector);
+  microtel.init({ endpoint: `http://127.0.0.1:${collector.address().port}` });
+  return collector;
+}
+
+// Starts the local target server the benchmark load is sent to.
+async function startTargetServer() {
   const server = http.createServer((req, res) => {
     res.end('ok');
   });
   await listen(server);
+  return server;
+}
+
+// Sets up a local target server, a keep-alive agent for the load, and,
+// when tracing, a dummy collector.
+async function setup({ tracing = false } = {}) {
+  const collector = await startCollector({ tracing });
+  const server = await startTargetServer();
 
   const port = server.address().port;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
@@ -77,6 +87,43 @@ function registerHttpBenchmark(name, { tracing = false } = {}) {
   });
 }
 
+// Registers one fetch() benchmark. fetch() pools connections through
+// undici's global dispatcher, so no agent is built; the same batch size
+// and sample count keep the numbers comparable with the HTTP benchmark.
+// Requests are sequential over the pooled connection, so the
+// traced/untraced difference reflects per-request work (two spans per
+// request), not scheduling or connection noise.
+function registerFetchBenchmark(name, { tracing = false } = {}) {
+  const kRequestsPerSample = 200;
+
+  let server;
+  let collector;
+  let url;
+
+  before(async () => {
+    collector = await startCollector({ tracing });
+    server = await startTargetServer();
+    url = `http://127.0.0.1:${server.address().port}/bench`;
+  });
+
+  after(async () => {
+    await close(server);
+    if (collector != null) await close(collector);
+  });
+
+  bench(name, { samples: 30 }, async (b) => {
+    b.start();
+    for (let i = 0; i < kRequestsPerSample; i++) {
+      // The response body is fully consumed, so one iteration covers the
+      // complete request.
+      const res = await fetch(url);
+      await res.arrayBuffer();
+    }
+    b.end(kRequestsPerSample);
+  });
+}
+
 module.exports = {
+  registerFetchBenchmark,
   registerHttpBenchmark,
 };
