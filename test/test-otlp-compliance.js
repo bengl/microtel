@@ -10,7 +10,6 @@ const { flush } = require('../lib/flush');
 const {
   startTracing,
   startHTTPServer,
-  getSpans,
   getServerSpan,
   flushAndCollect,
   spanAttrs,

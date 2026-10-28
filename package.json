@@ -28,10 +28,12 @@
   "scripts": {
     "test": "node --test 'test/test-*.js'",
     "bench": "node --experimental-bench --bench 'benchmark/*.bench.js'",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "lint": "eslint lib/ test/test-*.js test/common/*.js benchmark/ index.js"
   },
   "devDependencies": {
     "@opentelemetry/semantic-conventions": "1.43.0",
+    "eslint": "10.13.0",
     "prettier": "3.9.10"
   }
 }

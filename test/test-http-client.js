@@ -11,7 +11,6 @@ const {
   getClientSpan,
   httpGet,
   spanAttrs,
-  closeAll,
 } = require('./common/otel');
 
 describe('otel HTTP client spans', () => {
@@ -224,7 +223,6 @@ describe('otel HTTP client spans', () => {
       res.end('ok');
     });
 
-    const seen = [];
     const request = (headers, path) =>
       new Promise((resolve, reject) => {
         const req = http.get(

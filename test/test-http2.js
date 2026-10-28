@@ -10,7 +10,6 @@ const {
   getClientSpan,
   getServerSpan,
   spanAttrs,
-  closeAll,
 } = require('./common/otel');
 
 // Starts a plain HTTP/2 server for traced requests. The handler receives
@@ -143,7 +142,7 @@ describe('otel HTTP/2 server spans', () => {
 
     const fetchTarget = await startHTTPServer();
     // A fetch made while handling a traced HTTP/2 request.
-    const h2Server = await startHTTP2Server((stream, headers) => {
+    const h2Server = await startHTTP2Server((stream) => {
       fetch(`http://127.0.0.1:${fetchTarget.port}/down`)
         .then((res) => res.text())
         .then(() => {

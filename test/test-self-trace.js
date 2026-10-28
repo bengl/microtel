@@ -77,7 +77,7 @@ describe('otel self-trace prevention', () => {
     // The child traces against a collector whose endpoint carries a path,
     // exercises the export path twice, and also makes one ordinary request
     // to the collector's authority.
-    const { code, stdout, stderr } = await spawnMicrotel([
+    const { code, stderr } = await spawnMicrotel([
       fixture('selftrace-base-child.js'),
       JSON.stringify({ endpoint: `http://127.0.0.1:${collector.port}/base` }),
       String(collector.port),

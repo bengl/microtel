@@ -48,7 +48,7 @@ const kValidatorCases = [
   ['validateInteger', [1.5, 'x', 1]],
   ['validateInteger', [NaN, 'x', 1]],
   ['validateInteger', [5, 'x', 1]],
-  ['validateInteger', [9007199254740999, 'x', 1]],
+  ['validateInteger', [9007199254740992, 'x', 1]],
 ];
 
 // Error-constructor cases: impl.fn(...args) must return the error object.

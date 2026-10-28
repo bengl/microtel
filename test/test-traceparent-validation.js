@@ -8,7 +8,6 @@ const {
   flushAndCollect,
   getServerSpan,
   rawRequest,
-  closeAll,
 } = require('./common/otel');
 
 describe('otel traceparent validation', () => {
